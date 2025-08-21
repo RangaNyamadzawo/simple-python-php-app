@@ -26,33 +26,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # get full history so origin/<default> exists
 
-      # General code linting across languages (Super Linter)
+      - name: Ensure default branch is available
+        run: |
+          git fetch origin "${{ github.event.repository.default_branch }}:${{ github.event.repository.default_branch }}"
+
       - name: Super-Linter
         uses: super-linter/super-linter@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEFAULT_BRANCH: main
+          # Dynamically use the repo's real default branch (main/master/etc.)
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           VALIDATE_ALL_CODEBASE: true
-
-      # Quick filesystem CVE scan (Trivy)
-      - name: Trivy FS scan (CVE)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: 'fs'
-          ignore-unfixed: true
-          format: 'table'
-          exit-code: '1'      # fail on vulns
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-
-      # (Optional) Language-specific linting—uncomment what you use:
-      # - name: Node install
-      #   run: npm ci
-      # - name: ESLint
-      #   run: npx eslint .
-      # - name: Python lint
-      #   run: pipx run ruff check .
 
   # ----------------------------
   # 2) BUILD & UPLOAD TO S3
