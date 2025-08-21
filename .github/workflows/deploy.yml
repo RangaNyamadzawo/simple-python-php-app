@@ -1,0 +1,39 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: us-east-1
+    
+    - name: Create deployment package
+      run: |
+        zip -r deploy.zip . -x "*.git*" "README.md" "*.md"
+    
+    - name: Deploy to Elastic Beanstalk
+      run: |
+        aws elasticbeanstalk create-application-version \
+          --application-name doc-reviewer \
+          --version-label ${{ github.sha }} \
+          --source-bundle S3Bucket=${{ secrets.S3_BUCKET }},S3Key=deployments/${{ github.sha }}.zip
+        
+        aws s3 cp deploy.zip s3://${{ secrets.S3_BUCKET }}/deployments/${{ github.sha }}.zip
+        
+        aws elasticbeanstalk update-environment \
+          --application-name zse-doc-reviewer \
+          --environment-name zse-doc-reviewer-prod \
+          --version-label ${{ github.sha }}
