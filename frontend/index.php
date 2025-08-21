@@ -103,10 +103,15 @@ session_start();
 </div>
 
 <script>
-// Detect if running locally or in production
-const API_BASE = window.location.hostname === 'localhost' ? 
-    'http://localhost:5000/api' : 
-    `${window.location.protocol}//${window.location.hostname}/api`;
+// API configuration for different environments
+const API_BASE = (() => {
+    if (window.location.hostname === 'localhost') {
+        return 'http://localhost:5000/api';
+    } else {
+        // In production, we need to proxy API calls through the frontend
+        return '/api';
+    }
+})();
 let currentDocument = null;
 
 // Check if user is already logged in
