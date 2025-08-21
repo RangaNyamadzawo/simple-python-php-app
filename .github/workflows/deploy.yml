@@ -2,7 +2,7 @@ name: Deploy to AWS
 
 on:
   push:
-    branches: [ main ]
+    branches: [ prod ]
 
 jobs:
   deploy:
@@ -20,20 +20,35 @@ jobs:
         role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
         aws-region: us-east-1
     
+    - name: Set environment variables
+      run: |
+        echo "S3_BUCKET_NAME=${{ secrets.S3_BUCKET }}" >> $GITHUB_ENV
+        echo "VERSION_LABEL=${{ github.sha }}" >> $GITHUB_ENV
+    
     - name: Create deployment package
       run: |
         zip -r deploy.zip . -x "*.git*" "README.md" "*.md"
     
-    - name: Deploy to Elastic Beanstalk
+    - name: Upload to S3
+      run: |
+        aws s3 cp deploy.zip s3://$S3_BUCKET_NAME/deployments/$VERSION_LABEL.zip
+    
+    - name: Create application version
       run: |
         aws elasticbeanstalk create-application-version \
-          --application-name doc-reviewer \
-          --version-label ${{ github.sha }} \
-          --source-bundle S3Bucket=${{ secrets.S3_BUCKET }},S3Key=deployments/${{ github.sha }}.zip
-        
-        aws s3 cp deploy.zip s3://${{ secrets.S3_BUCKET }}/deployments/${{ github.sha }}.zip
-        
+          --application-name zse-doc-reviewer \
+          --version-label $VERSION_LABEL \
+          --source-bundle S3Bucket=$S3_BUCKET_NAME,S3Key=deployments/$VERSION_LABEL.zip
+    
+    - name: Deploy to environment
+      run: |
         aws elasticbeanstalk update-environment \
           --application-name zse-doc-reviewer \
           --environment-name zse-doc-reviewer-prod \
-          --version-label ${{ github.sha }}
+          --version-label $VERSION_LABEL
+    
+    - name: Wait for deployment
+      run: |
+        aws elasticbeanstalk wait environment-updated \
+          --application-name zse-doc-reviewer \
+          --environment-name zse-doc-reviewer-prod
