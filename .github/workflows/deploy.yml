@@ -2,10 +2,12 @@ name: Deploy to AWS
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - '**'           # run on any branch push
   pull_request:
     branches: [ main ]
-    types: [ closed ]
+    types: [ closed ]  # still deploy on merge/close if you want
+  workflow_dispatch:    # allow manual runs from any branch
 
 jobs:
   deploy:
@@ -13,47 +15,58 @@ jobs:
     permissions:
       id-token: write
       contents: read
-      
+
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: us-east-1
-    
-    - name: Set environment variables
-      run: |
-        echo "S3_BUCKET_NAME=${{ secrets.S3_BUCKET }}" >> $GITHUB_ENV
-        echo "VERSION_LABEL=${{ github.sha }}" >> $GITHUB_ENV
-    
-    - name: Create deployment package
-      run: |
-        zip -r deploy.zip . -x "*.git*" "README.md" "*.md"
-    
-    - name: Upload to S3
-      run: |
-        aws s3 cp deploy.zip s3://$S3_BUCKET_NAME/deployments/$VERSION_LABEL.zip
-    
-    - name: Create application version
-      run: |
-        aws elasticbeanstalk create-application-version \
-          --application-name doc-reviewer \
-          --version-label $VERSION_LABEL \
-          --source-bundle S3Bucket=$S3_BUCKET_NAME,S3Key=deployments/$VERSION_LABEL.zip
-    
-    - name: Deploy to environment
-      run: |
-        aws elasticbeanstalk update-environment \
-          --application-name zse-doc-reviewer \ 
-          --environment-name zse-doc-reviewer-prod \
-          --version-label $VERSION_LABEL \
-          --option-settings \
-            Namespace=aws:elasticbeanstalk:environment,OptionName=ServiceRole,Value=aws-elasticbeanstalk-service-role
-    
-    - name: Wait for deployment
-      run: |
-        aws elasticbeanstalk wait environment-updated \
-          --application-name zse-doc-reviewer \
-          --environment-name zse-doc-reviewer-prod
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Set environment variables
+        run: |
+          echo "S3_BUCKET_NAME=${{ secrets.S3_BUCKET }}" >> $GITHUB_ENV
+          echo "VERSION_LABEL=${{ github.sha }}" >> $GITHUB_ENV
+          echo "APPLICATION_NAME=zse-doc-reviewer" >> $GITHUB_ENV
+          echo "ENV_NAME=zse-doc-reviewer-prod" >> $GITHUB_ENV
+
+      - name: Who am I / region sanity check
+        run: |
+          aws sts get-caller-identity
+          aws configure list
+
+      - name: Create deployment package
+        run: |
+          zip -r deploy.zip . -x "*.git*" "README.md" "*.md"
+
+      - name: Upload to S3
+        run: |
+          aws s3 cp deploy.zip s3://$S3_BUCKET_NAME/deployments/$VERSION_LABEL.zip
+
+      - name: Ensure EB application exists (no-op if it does)
+        run: |
+          if ! aws elasticbeanstalk describe-applications \
+            --query "Applications[?ApplicationName=='$APPLICATION_NAME']|[0]" --output text | grep -q .; then
+            aws elasticbeanstalk create-application --application-name "$APPLICATION_NAME"
+          fi
+
+      - name: Create application version
+        run: |
+          aws elasticbeanstalk create-application-version \
+            --application-name "$APPLICATION_NAME" \
+            --version-label "$VERSION_LABEL" \
+            --source-bundle S3Bucket="$S3_BUCKET_NAME",S3Key="deployments/$VERSION_LABEL.zip"
+
+      - name: Deploy to environment
+        run: |
+          aws elasticbeanstalk update-environment \
+            --environment-name "$ENV_NAME" \
+            --version-label "$VERSION_LABEL" \
+            --option-settings Namespace=aws:elasticbeanstalk:environment,OptionName=ServiceRole,Value=aws-elasticbeanstalk-service-role
+
+      - name: Wait for deployment
+        run: |
+          aws elasticbeanstalk wait environment-updated \
+            --environment-name "$ENV_NAME"
