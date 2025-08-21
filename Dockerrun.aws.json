@@ -1,34 +1,20 @@
 {
-  "AWSEBDockerrunVersion": 2,
-  "containerDefinitions": [
-    {
-      "name": "backend",
-      "image": "backend",
-      "hostname": "backend",
-      "essential": true,
-      "memory": 512,
-      "portMappings": [
-        {
-          "hostPort": 5000,
-          "containerPort": 5000,
-          "protocol": "tcp"
-        }
-      ]
+  "AWSEBDockerrunVersion": 3,
+  "services": {
+    "backend": {
+      "build": "./backend",
+      "ports": ["5000:5000"],
+      "environment": {
+        "FLASK_ENV": "production"
+      }
     },
-    {
-      "name": "frontend",
-      "image": "frontend", 
-      "hostname": "frontend",
-      "essential": true,
-      "memory": 512,
-      "portMappings": [
-        {
-          "hostPort": 80,
-          "containerPort": 80,
-          "protocol": "tcp"
-        }
-      ],
-      "links": ["backend"]
+    "frontend": {
+      "build": "./frontend", 
+      "ports": ["80:80"],
+      "depends_on": ["backend"],
+      "environment": {
+        "BACKEND_URL": "http://backend:5000"
+      }
     }
-  ]
+  }
 }
