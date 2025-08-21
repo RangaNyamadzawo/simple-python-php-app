@@ -3,19 +3,63 @@ name: Deploy to AWS
 on:
   push:
     branches:
-      - '**'           # run on any branch push
+      - '**'               # any branch
   pull_request:
     branches: [ main ]
-    types: [ closed ]  # still deploy on merge/close if you want
-  workflow_dispatch:    # allow manual runs from any branch
+    types: [ closed ]      # optional: deploy on merge
+  workflow_dispatch:        # manual trigger
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  APPLICATION_NAME: zse-doc-reviewer
+  ENV_NAME: zse-doc-reviewer-prod
 
 jobs:
-  deploy:
+  # ----------------------------
+  # 1) LINT & SECURITY SCAN
+  # ----------------------------
+  lint:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
+    steps:
+      - uses: actions/checkout@v4
 
+      # General code linting across languages (Super Linter)
+      - name: Super-Linter
+        uses: super-linter/super-linter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: main
+          VALIDATE_ALL_CODEBASE: true
+
+      # Quick filesystem CVE scan (Trivy)
+      - name: Trivy FS scan (CVE)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          ignore-unfixed: true
+          format: 'table'
+          exit-code: '1'      # fail on vulns
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      # (Optional) Language-specific linting—uncomment what you use:
+      # - name: Node install
+      #   run: npm ci
+      # - name: ESLint
+      #   run: npx eslint .
+      # - name: Python lint
+      #   run: pipx run ruff check .
+
+  # ----------------------------
+  # 2) BUILD & UPLOAD TO S3
+  # ----------------------------
+  build:
+    needs: lint
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -23,19 +67,14 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Set environment variables
         run: |
           echo "S3_BUCKET_NAME=${{ secrets.S3_BUCKET }}" >> $GITHUB_ENV
           echo "VERSION_LABEL=${{ github.sha }}" >> $GITHUB_ENV
-          echo "APPLICATION_NAME=zse-doc-reviewer" >> $GITHUB_ENV
-          echo "ENV_NAME=zse-doc-reviewer-prod" >> $GITHUB_ENV
-
-      - name: Who am I / region sanity check
-        run: |
-          aws sts get-caller-identity
-          aws configure list
+          echo "APPLICATION_NAME=${{ env.APPLICATION_NAME }}" >> $GITHUB_ENV
+          echo "ENV_NAME=${{ env.ENV_NAME }}" >> $GITHUB_ENV
 
       - name: Create deployment package
         run: |
@@ -45,10 +84,31 @@ jobs:
         run: |
           aws s3 cp deploy.zip s3://$S3_BUCKET_NAME/deployments/$VERSION_LABEL.zip
 
+  # ----------------------------
+  # 3) DEPLOY TO ELASTIC BEANSTALK
+  # ----------------------------
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set environment variables
+        run: |
+          echo "S3_BUCKET_NAME=${{ secrets.S3_BUCKET }}" >> $GITHUB_ENV
+          echo "VERSION_LABEL=${{ github.sha }}" >> $GITHUB_ENV
+          echo "APPLICATION_NAME=${{ env.APPLICATION_NAME }}" >> $GITHUB_ENV
+          echo "ENV_NAME=${{ env.ENV_NAME }}" >> $GITHUB_ENV
+
       - name: Ensure EB application exists (no-op if it does)
         run: |
           if ! aws elasticbeanstalk describe-applications \
-            --query "Applications[?ApplicationName=='$APPLICATION_NAME']|[0]" --output text | grep -q .; then
+            --query "Applications[?ApplicationName=='$APPLICATION_NAME']|[0]" \
+            --output text | grep -q .; then
             aws elasticbeanstalk create-application --application-name "$APPLICATION_NAME"
           fi
 
