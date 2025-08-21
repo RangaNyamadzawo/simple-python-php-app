@@ -1,8 +1,6 @@
 name: Deploy to AWS
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
     types: [ closed ]
@@ -10,6 +8,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Only run if PR was merged (not just closed)
+    if: github.event.pull_request.merged == true
     permissions:
       id-token: write
       contents: read
@@ -39,7 +39,7 @@ jobs:
     - name: Create application version
       run: |
         aws elasticbeanstalk create-application-version \
-          --application-name zse-doc-reviewer \
+          --application-name doc-reviewer \
           --version-label $VERSION_LABEL \
           --source-bundle S3Bucket=$S3_BUCKET_NAME,S3Key=deployments/$VERSION_LABEL.zip
     
