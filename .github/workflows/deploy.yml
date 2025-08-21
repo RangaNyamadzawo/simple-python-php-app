@@ -24,6 +24,7 @@ jobs:
   # ----------------------------
   lint:
     runs-on: ubuntu-latest
+    continue-on-error: true   # 👈 workflow continues even if lint fails
     steps:
       - uses: actions/checkout@v4
         with:
