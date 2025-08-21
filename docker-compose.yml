@@ -3,21 +3,23 @@ version: '3.8'
 services:
   backend:
     build: ./backend
-    container_name: doc-reviewer-backend
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./uploads:/app/uploads
+    container_name: backend
+    expose:
+      - "5000"
     environment:
       - FLASK_ENV=production
+    volumes:
+      - uploads:/app/uploads
     
   frontend:
     build: ./frontend
-    container_name: doc-reviewer-frontend
+    container_name: frontend
     ports:
       - "80:80"
     depends_on:
       - backend
+    environment:
+      - BACKEND_HOST=backend
 
 volumes:
   uploads:
