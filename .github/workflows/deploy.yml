@@ -13,7 +13,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
-
+      
     steps:
     - uses: actions/checkout@v3
     
@@ -39,7 +39,7 @@ jobs:
     - name: Create application version
       run: |
         aws elasticbeanstalk create-application-version \
-          --application-name zse-doc-reviewer \
+          --application-name doc-reviewer \
           --version-label $VERSION_LABEL \
           --source-bundle S3Bucket=$S3_BUCKET_NAME,S3Key=deployments/$VERSION_LABEL.zip
     
