@@ -40,7 +40,6 @@ session_start();
                 <input type="password" id="password" placeholder="Password">
             </div>
             <button onclick="login()">Login</button>
-            <p><small>Users: admin, reviewer1, reviewer2 (password: password123)</small></p>
         </div>
     </div>
 
@@ -107,7 +106,7 @@ session_start();
 // Detect if running locally or in production
 const API_BASE = window.location.hostname === 'localhost' ? 
     'http://localhost:5000/api' : 
-    `${window.location.protocol}//${window.location.hostname}:5000/api`;
+    `${window.location.protocol}//${window.location.hostname}/api`;
 let currentDocument = null;
 
 // Check if user is already logged in
