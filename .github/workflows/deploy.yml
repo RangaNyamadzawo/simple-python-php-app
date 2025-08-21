@@ -17,6 +17,7 @@ env:
   AWS_REGION: us-east-1
   APPLICATION_NAME: zse-doc-reviewer
   ENV_NAME: zse-doc-reviewer-prod
+  HEALTHCHECK_URL: http://zse-doc-reviewer-prod.us-east-1.elasticbeanstalk.com/health   # <-- set this
 
 jobs:
   # ----------------------------
@@ -24,11 +25,11 @@ jobs:
   # ----------------------------
   lint:
     runs-on: ubuntu-latest
-    continue-on-error: true   # 👈 workflow continues even if lint fails
+    continue-on-error: true   # advisory
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # get full history so origin/<default> exists
+          fetch-depth: 0
 
       - name: Ensure default branch is available
         run: |
@@ -38,7 +39,6 @@ jobs:
         uses: super-linter/super-linter@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Dynamically use the repo's real default branch (main/master/etc.)
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           VALIDATE_ALL_CODEBASE: true
 
@@ -74,10 +74,14 @@ jobs:
 
   # ----------------------------
   # 3) DEPLOY TO ELASTIC BEANSTALK
+  #    (captures previous version for rollback)
   # ----------------------------
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      previous_version: ${{ steps.getprev.outputs.previous_version }}
+      new_version: ${{ steps.meta.outputs.new_version }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -86,11 +90,23 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Set environment variables
+        id: meta
         run: |
           echo "S3_BUCKET_NAME=${{ secrets.S3_BUCKET }}" >> $GITHUB_ENV
           echo "VERSION_LABEL=${{ github.sha }}" >> $GITHUB_ENV
           echo "APPLICATION_NAME=${{ env.APPLICATION_NAME }}" >> $GITHUB_ENV
           echo "ENV_NAME=${{ env.ENV_NAME }}" >> $GITHUB_ENV
+          echo "new_version=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Get current environment version (PREVIOUS)
+        id: getprev
+        run: |
+          PREV=$(aws elasticbeanstalk describe-environments \
+            --application-name "$APPLICATION_NAME" \
+            --environment-names "$ENV_NAME" \
+            --query "Environments[0].VersionLabel" --output text)
+          echo "Previous version: $PREV"
+          echo "previous_version=$PREV" >> $GITHUB_OUTPUT
 
       - name: Ensure EB application exists (no-op if it does)
         run: |
@@ -118,3 +134,59 @@ jobs:
         run: |
           aws elasticbeanstalk wait environment-updated \
             --environment-name "$ENV_NAME"
+
+  # ----------------------------
+  # 4) VERIFY – post-deploy health gate
+  # ----------------------------
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check EB health status
+        run: |
+          STATUS=$(aws elasticbeanstalk describe-environments \
+            --application-name "${{ env.APPLICATION_NAME }}" \
+            --environment-names "${{ env.ENV_NAME }}" \
+            --query "Environments[0].Health" --output text)
+          echo "EB Health: $STATUS"
+          test "$STATUS" = "Green"
+
+      - name: Check application health endpoint
+        run: |
+          set -e
+          for i in {1..12}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "${{ env.HEALTHCHECK_URL }}")
+            echo "Attempt $i: HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 5
+          done
+          echo "Health endpoint did not return 200 within timeout"
+          exit 1
+
+  # ----------------------------
+  # 5) ROLLBACK – only if verify FAILED
+  # ----------------------------
+  rollback:
+    needs: [deploy, verify]
+    if: needs.verify.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Roll back to previous EB version
+        run: |
+          PREV="${{ needs.deploy.outputs.previous_version }}"
+          if [ -z "$PREV" ] || [ "$PREV" = "None" ]; then
+            echo "No previous version to roll back to."
+            exit 1
+          fi
+          echo "Rolling back to version: $PREV"
+          aws elasticbeanstalk update-environment \
+            --environment-name "${{ env.ENV_NAME }}" \
+            --version-label "$PREV"
+          aws elasticbeanstalk wait environment-updated \
+            --environment-name "${{ env.ENV_NAME }}"
